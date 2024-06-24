@@ -1,10 +1,11 @@
 import os
 import sys
 sys.path.insert(0, os.path.dirname(__file__))
+import cv2.ximgproc
 import numpy as np
 import torch
 import cv2
-from PIL import Image, ImageOps, ImageSequence
+from PIL import Image, ImageFilter
 import folder_paths
 import AEMatterModel
 
@@ -271,15 +272,168 @@ class Create_Trimap:
 
         return result
 
+class Mask_Transfor:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mask": ('MASK', {}),
+                "k": ("FLOAT", {
+                    "default": 2.0,
+                    "min": 1.0,
+                    "max": 4.0,
+                    "step": 0.1
+                }),
+            }
+        }
+
+    RETURN_NAMES = ("mask",)
+    FUNCTION = "transform"
+    CATEGORY = "AEMatter"
+    RETURN_TYPES = ("MASK",)
+    def transform(self, mask, k):
+        def func(x, k):
+            return x**k
+        res_masks = []
+        for mask_ in mask:
+            mask_ = mask_.cpu().numpy()
+            mask_ = np.clip(func(mask_, k), 0, 1)
+            res_masks.extend([torch.from_numpy(mask_).unsqueeze(0)])
+        return (torch.cat(res_masks, dim=0),)
+
+
+class Replace_Background:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "mask": ("MASK",),
+            },
+            "optional":{
+                "BgImage_optional": ("IMAGE",),
+            },
+        }
+
+    RETURN_NAMES = ("image",)
+    FUNCTION = "replace"
+    CATEGORY = "AEMatter"
+    RETURN_TYPES = ("IMAGE",)
+    def replace(self, image, mask, BgImage_optional=None):
+       
+        image = tensor2pil(image)
+        image = image.convert('RGB')
+        mask = tensor2pil(mask)
+        if BgImage_optional is not None:
+            backgound = tensor2pil(BgImage_optional)
+            backgound = backgound.resize(image.size)
+            new_im = Image.composite(image, backgound, mask)
+            new_im = new_im.convert('RGB')
+        else:
+            new_im = Image.new("RGBA", image.size, (0, 0, 0, 0))
+            new_im.paste(image, mask=mask)
+        new_im = pil2tensor(new_im)
+        return (new_im,)
+
+
+class Gaussian_Filter:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "mask": ('MASK', {}),
+                "kernel": ("INT", {
+                    "default": 5,
+                    "min": 3,
+                    "max": 15,
+                    "step": 1
+                }),
+                "sigma": ("FLOAT", {
+                    "default": 0,
+                    "min": 0.0,
+                    "max": 10.0,
+                    "step": 0.1
+                }),
+            }
+        }
+
+    RETURN_NAMES = ("mask",)
+    FUNCTION = "gaussian"
+    CATEGORY = "AEMatter"
+    RETURN_TYPES = ("MASK",)
+    def gaussian(self, mask, kernel, sigma):
+
+        for mask_ in mask:
+            mask_ = tensor2numpy(mask)
+            mask_ = cv2.GaussianBlur(mask_, (kernel, kernel), kernel)
+            mask_ = Image.fromarray(mask_)
+            mask_ = pil2tensor(mask_)
+        return (mask_,)
+
+class Guide_Filter:
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "mask": ('MASK', {}),
+                "kernel": ("INT", {
+                    "default": 5,
+                    "min": 1,
+                    "max": 15,
+                    "step": 1
+                }),
+                "eps": ("FLOAT", {
+                    "default": 1,
+                    "min": 0.0,
+                    "max": 30,
+                    "step": 0.1
+                }),
+            }
+        }
+
+    RETURN_NAMES = ("mask",)
+    FUNCTION = "guide"
+    CATEGORY = "AEMatter"
+    RETURN_TYPES = ("MASK",)
+    def guide(self, image, mask, kernel, eps):
+        image = tensor2numpy(image)
+        mask_ = tensor2numpy(mask)
+        guided_filter  = cv2.ximgproc.createGuidedFilter(image, kernel, eps)
+        mask_ = guided_filter.filter(mask_, mask_)
+        mask_ = Image.fromarray(mask_)
+        mask_ = pil2tensor(mask_)
+        return (mask_,)
+
+
 NODE_CLASS_MAPPINGS = {
     "AEMatter_ModelLoader": AEMatter_ModelLoader,
     "Create_Trimap": Create_Trimap,
     "AEMatter_Apply": AEMatter_Apply,
-
+    "Mask_Transfor": Mask_Transfor,
+    "Replace_Background": Replace_Background,
+    "Gaussian_Filter": Gaussian_Filter,
+    "Guide_Filter": Guide_Filter,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "AEMatter_ModelLoader": "AEMatter_ModelLoader",
     "Create_Trimap": "Create_Trimap",
     "AEMatter_Apply": "AEMatter_Apply",
+    "Mask_Transfor": "Mask_Transfor",
+    "Replace_Background": "Replace_Background",
+    "Gaussian_Filter": "Gaussian_Filter",
+    "Guide_Filter": "Guide_Filter",
 }
