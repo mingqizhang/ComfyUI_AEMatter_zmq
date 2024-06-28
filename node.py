@@ -305,6 +305,85 @@ class Mask_Transfor:
         return (torch.cat(res_masks, dim=0),)
 
 
+class Improved_Aplha_Composite:
+    """
+    改进的alpha合成方法，包括边缘优化, 减少边缘变黑的情况出现
+    :param image: RGB图像
+    :param mask: 对应的mask图像
+    :param edge_brightness: 边缘亮度提升因子
+    :param color_boost: 颜色提升因子
+    """
+    def __init__(self):
+        pass
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "mask": ("MASK",),
+                "edge_brightness": ("FLOAT", {
+                    "default": 1.2,
+                    "min": 0.5,
+                    "max": 3,
+                    "step": 0.1
+                }),
+                "color_boost": ("FLOAT", {
+                    "default": 1.1,
+                    "min": 0.5,
+                    "max": 3,
+                    "step": 0.1
+                }),
+            },
+            "optional":{
+                "BgImage_optional": ("IMAGE",),
+            },
+        }
+
+    RETURN_NAMES = ("image",)
+    FUNCTION = "replace"
+    CATEGORY = "AEMatter"
+    RETURN_TYPES = ("IMAGE",)
+    def replace(self, image, mask, edge_brightness, color_boost, BgImage_optional=None):
+       
+        image = tensor2pil(image)
+        image = image.convert('RGB')
+        mask = tensor2pil(mask)
+
+        # 步骤1: 初始alpha合成
+        rgba = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        rgba.paste(image, (0, 0))
+        alpha = Image.new('L', image.size, 0)
+        alpha.paste(mask, (0, 0))
+        rgba.putalpha(alpha)
+
+        # 步骤2: 边缘亮度提升
+        img_array = np.array(rgba).astype(float)
+        alpha_array = np.array(alpha).astype(float) / 255
+        weight = 1 - alpha_array
+        for i in range(3):  # RGB通道
+            img_array[:,:,i] = np.clip(img_array[:,:,i] * (1 + weight * (edge_brightness - 1)), 0, 255)
+
+        # 步骤3: 颜色提升
+        hsv = Image.fromarray(img_array[:,:,:3].astype('uint8')).convert('HSV')
+        h, s, v = hsv.split()
+        s_array = np.array(s).astype(float)
+        s_array = np.clip(s_array * (1 + weight * (color_boost - 1)), 0, 255)
+        enhanced_hsv = Image.merge('HSV', (h, Image.fromarray(s_array.astype('uint8')), v))
+        enhanced_rgb = enhanced_hsv.convert('RGB')
+
+        if BgImage_optional is not None:
+            background = tensor2pil(BgImage_optional)
+            background = background.resize(image.size)
+            background = np.array(background).astype(float)
+            result_array =np.array(enhanced_rgb).astype(float)
+            final_array = result_array * alpha_array[:,:,np.newaxis] + background * (1 - alpha_array[:,:,np.newaxis])
+        else:
+            final_array = np.dstack((enhanced_rgb, img_array[:,:,3]))
+        new_im = pil2tensor(final_array)
+
+        return (new_im, )
+
 class Replace_Background:
     def __init__(self):
         pass
@@ -315,6 +394,7 @@ class Replace_Background:
             "required": {
                 "image": ("IMAGE",),
                 "mask": ("MASK",),
+
             },
             "optional":{
                 "BgImage_optional": ("IMAGE",),
@@ -340,7 +420,6 @@ class Replace_Background:
             new_im.paste(image, mask=mask)
         new_im = pil2tensor(new_im)
         return (new_im,)
-
 
 class Gaussian_Filter:
     def __init__(self):
@@ -426,6 +505,8 @@ NODE_CLASS_MAPPINGS = {
     "Replace_Background": Replace_Background,
     "Gaussian_Filter": Gaussian_Filter,
     "Guide_Filter": Guide_Filter,
+    "Improved_Aplha_Composite": Improved_Aplha_Composite,
+
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -436,4 +517,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "Replace_Background": "Replace_Background",
     "Gaussian_Filter": "Gaussian_Filter",
     "Guide_Filter": "Guide_Filter",
+    "Improved_Aplha_Composite": "Improved_Aplha_Composite",
 }
